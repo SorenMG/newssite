@@ -37,7 +37,7 @@ func main() {
 	//colly.AllowedDomains("www.bt.dk"),
 	)
 	c.DisableCookies()
-	c.Limit(&colly.LimitRule{Parallelism: 4})
+	c.Limit(&colly.LimitRule{Parallelism: 2})
 
 	// create a request queue with 2 consumer threads
 	q, _ := queue.New(
