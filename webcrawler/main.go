@@ -17,9 +17,10 @@ package main
 import (
 	"fmt"
 	"log"
+	url "net/url"
 	"os"
+	"strings"
 
-	"github.com/asaskevich/govalidator"
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/queue"
 )
@@ -30,14 +31,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	PageURL := os.Args[1]
+	pageURL := os.Args[1]
+
+	queryUrl := validateURL(pageURL)
 
 	// Instantiate default collector
 	c := colly.NewCollector(
-	//colly.AllowedDomains("www.bt.dk"),
+		colly.AllowedDomains(queryUrl.Host),
 	)
 	c.DisableCookies()
-	c.Limit(&colly.LimitRule{Parallelism: 4})
+	c.Limit(&colly.LimitRule{
+		Parallelism: 4,
+	})
 
 	// create a request queue with 2 consumer threads
 	q, _ := queue.New(
@@ -55,9 +60,17 @@ func main() {
 		link := e.Attr("href")
 
 		// Convert relative links to absolute
-		if !govalidator.IsURL(link) {
-			link = PageURL + link
+		parsedLink, err := url.Parse(link)
+
+		if err != nil {
+			log.Println("Could not parse: " + link)
+			return
 		}
+
+		parsedLink.Scheme = queryUrl.Scheme
+		parsedLink.Host = queryUrl.Host
+
+		link = parsedLink.String()
 
 		hasVisited, err := c.HasVisited(link)
 
@@ -79,7 +92,36 @@ func main() {
 	})
 
 	// Start scraping
-	q.AddURL(PageURL)
+	q.AddURL(pageURL)
 
 	q.Run(c)
+}
+
+func validateURL(pageUrl string) (queryUrl *url.URL) {
+	queryUrl, err := url.Parse(pageUrl)
+
+	if err != nil {
+		log.Println("Could not parse URL")
+		os.Exit(1)
+	}
+
+	fmt.Println(queryUrl.Path)
+
+	// Validate URL
+	if queryUrl.Scheme == "" {
+		log.Println("Missing scheme")
+		os.Exit(1)
+	}
+
+	if queryUrl.Host == "" {
+		log.Println("Missing host name")
+		os.Exit(1)
+	}
+
+	if !strings.Contains(queryUrl.Host, "www.") {
+		log.Println("Missing www in URL")
+		os.Exit(1)
+	}
+
+	return
 }
