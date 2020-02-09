@@ -15,49 +15,46 @@
 package main
 
 import (
-	"fmt"
 	"log"
+	url "net/url"
 	"os"
 
-	"github.com/asaskevich/govalidator"
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/queue"
 )
 
 func main() {
+	// Check for argument
 	if len(os.Args) != 2 {
 		log.Println("Missing URL argument")
 		os.Exit(1)
 	}
 
-	PageURL := os.Args[1]
+	// Parse and validate argument
+	pageURL := os.Args[1]
+	queryUrl := validateURL(pageURL)
 
+<<<<<<< HEAD
 	// Instantiate default collector
 	c := colly.NewCollector(
 	//colly.AllowedDomains("www.bt.dk"),
 	)
 	c.DisableCookies()
 	c.Limit(&colly.LimitRule{Parallelism: 2})
+=======
+	// Instantiate collector
+	c := initScraper(queryUrl)
+>>>>>>> dev
 
-	// create a request queue with 2 consumer threads
+	// create a request queue with 10 consumer threads
 	q, _ := queue.New(
-		2, // Number of consumer threads
+		20, // Number of consumer threads
 		&queue.InMemoryQueueStorage{MaxSize: 10000}, // Use default queue storage
 	)
 
-	// Check article metadata
-	c.OnHTML("head", func(e *colly.HTMLElement) {
-		//fmt.Println("Head found")
-	})
-
 	// Queue new links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		link := e.Attr("href")
-
-		// Convert relative links to absolute
-		if !govalidator.IsURL(link) {
-			link = PageURL + link
-		}
+		link := e.Request.AbsoluteURL(e.Attr("href"))
 
 		hasVisited, err := c.HasVisited(link)
 
@@ -75,11 +72,53 @@ func main() {
 
 	// Before making a request print "Visiting ..."
 	c.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting:", r.URL.String())
+		//log.Println("Visiting:", r.URL.String())
+	})
+
+	c.OnHTML("meta[property]", func(e *colly.HTMLElement) {
+		if e.Attr("property") != "og:title" {
+			return
+		}
+		log.Println(e.Attr("content"))
 	})
 
 	// Start scraping
-	q.AddURL(PageURL)
+	q.AddURL(pageURL)
 
 	q.Run(c)
+}
+
+func initScraper(url *url.URL) (scraper *colly.Collector) {
+	scraper = colly.NewCollector(
+		colly.AllowedDomains("cnn.com"),
+	)
+	scraper.DisableCookies()
+	return
+}
+
+func validateURL(pageUrl string) (queryUrl *url.URL) {
+	queryUrl, err := url.Parse(pageUrl)
+
+	if err != nil {
+		log.Println("Could not parse URL")
+		os.Exit(1)
+	}
+
+	// Validate URL
+	if queryUrl.Scheme == "" {
+		log.Println("Missing scheme")
+		os.Exit(1)
+	}
+
+	if queryUrl.Host == "" {
+		log.Println("Missing host name")
+		os.Exit(1)
+	}
+
+	//if !strings.Contains(queryUrl.Host, "www.") {
+	//log.Println("Missing www in URL")
+	//os.Exit(1)
+	//}
+
+	return
 }
