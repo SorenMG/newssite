@@ -15,12 +15,14 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	url "net/url"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/gocolly/colly"
-	"github.com/gocolly/colly/queue"
 )
 
 func main() {
@@ -37,12 +39,6 @@ func main() {
 	// Instantiate collector
 	c := initScraper(queryUrl)
 
-	// create a request queue with 10 consumer threads
-	q, _ := queue.New(
-		20, // Number of consumer threads
-		&queue.InMemoryQueueStorage{MaxSize: 10000}, // Use default queue storage
-	)
-
 	// Queue new links
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Request.AbsoluteURL(e.Attr("href"))
@@ -57,32 +53,39 @@ func main() {
 			return
 		}
 
-		// Visit link found on page on a new thread
-		q.AddURL(link)
+		e.Request.Visit(link)
 	})
 
 	// Before making a request print "Visiting ..."
 	c.OnRequest(func(r *colly.Request) {
-		//log.Println("Visiting:", r.URL.String())
+		log.Println("Visiting:", r.URL.String())
 	})
 
 	c.OnHTML("meta[property]", func(e *colly.HTMLElement) {
 		if e.Attr("property") != "og:title" {
 			return
 		}
-		log.Println(e.Attr("content"))
+		//log.Println(e.Attr("content"))
 	})
 
-	// Start scraping
-	q.AddURL(pageURL)
+	c.Visit(pageURL)
 
-	q.Run(c)
+	c.Wait()
 }
 
 func initScraper(url *url.URL) (scraper *colly.Collector) {
+	domainList := strings.Split(url.Host, ".")
+
+	// Take the second and last and make regex
+	regular := fmt.Sprintf("(http://|https://)[a-zA-Z]+\\.%s\\.%s", domainList[1], domainList[2])
+
 	scraper = colly.NewCollector(
-		colly.AllowedDomains("cnn.com"),
+		colly.Async(true),
+		colly.URLFilters(
+			regexp.MustCompile(regular),
+		),
 	)
+	scraper.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 1})
 	scraper.DisableCookies()
 	return
 }
@@ -106,10 +109,12 @@ func validateURL(pageUrl string) (queryUrl *url.URL) {
 		os.Exit(1)
 	}
 
-	//if !strings.Contains(queryUrl.Host, "www.") {
-	//log.Println("Missing www in URL")
-	//os.Exit(1)
-	//}
+	if !strings.Contains(queryUrl.Host, "www.") {
+		log.Println("Missing www in URL")
+		os.Exit(1)
+	}
+
+	log.Println(queryUrl.String())
 
 	return
 }
