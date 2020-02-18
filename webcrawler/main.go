@@ -1,16 +1,8 @@
-// Webcrawler
+/*
+Versatile webcrawler for scraping news sites and gather articles.
 
-// Stuff to think about:
-// Dynamic websites - browser automation (selenium)
-// Queue - Min priority queue then count number of times link occur
-// Concurrency
-// One collector per site scraped
-// Persistent background storage
-// Cross referencing filter with background storage (Maybe store the most frequent mentioned links in memory)
-// Scraping article metadata
-// Keep scraping in scope of domain
-// Cookies
-// Fix relative paths to absolute paths
+Made by: Soren Gade
+*/
 
 package main
 
@@ -23,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/gocolly/colly"
+	"github.com/gocolly/redisstorage"
 )
 
 func main() {
@@ -39,38 +32,41 @@ func main() {
 	// Instantiate collector
 	c := initScraper(queryUrl)
 
-	// Queue new links
-	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		link := e.Request.AbsoluteURL(e.Attr("href"))
+	// Handle html
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) { handleLinks(c, e) })
+	c.OnHTML("meta[property]", func(e *colly.HTMLElement) { handleMeta(e) })
 
-		hasVisited, err := c.HasVisited(link)
-
-		if err != nil {
-			return
-		}
-
-		if hasVisited {
-			return
-		}
-
-		e.Request.Visit(link)
-	})
-
-	// Before making a request print "Visiting ..."
+	// Debug print statement
 	c.OnRequest(func(r *colly.Request) {
 		log.Println("Visiting:", r.URL.String())
 	})
 
-	c.OnHTML("meta[property]", func(e *colly.HTMLElement) {
-		if e.Attr("property") != "og:title" {
-			return
-		}
-		//log.Println(e.Attr("content"))
-	})
-
+	// Set start page
 	c.Visit(pageURL)
-
 	c.Wait()
+}
+
+func handleMeta(e *colly.HTMLElement) {
+	if e.Attr("property") != "og:title" {
+		return
+	}
+	//log.Println(e.Attr("content"))
+}
+
+func handleLinks(c *colly.Collector, e *colly.HTMLElement) {
+	link := e.Request.AbsoluteURL(e.Attr("href"))
+
+	hasVisited, err := c.HasVisited(link)
+
+	if err != nil {
+		return
+	}
+
+	if hasVisited {
+		return
+	}
+
+	e.Request.Visit(link)
 }
 
 func initScraper(url *url.URL) (scraper *colly.Collector) {
@@ -78,6 +74,14 @@ func initScraper(url *url.URL) (scraper *colly.Collector) {
 
 	// Take the second and last and make regex
 	regular := fmt.Sprintf("(http://|https://)[a-zA-Z]+\\.%s\\.%s", domainList[1], domainList[2])
+
+	// create the redis storage
+	storage := &redisstorage.Storage{
+		Address:  "127.0.0.1:6379",
+		Password: "",
+		DB:       0,
+		Prefix:   "news_url_filter",
+	}
 
 	scraper = colly.NewCollector(
 		colly.Async(true),
@@ -87,6 +91,21 @@ func initScraper(url *url.URL) (scraper *colly.Collector) {
 	)
 	scraper.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 1})
 	scraper.DisableCookies()
+
+	// add storage to the collector
+	err := scraper.SetStorage(storage)
+	if err != nil {
+		panic(err)
+	}
+
+	// delete previous data from storage
+	if err := storage.Clear(); err != nil {
+		log.Fatal(err)
+	}
+
+	// close redis client
+	//defer storage.Client.Close()
+
 	return
 }
 
@@ -113,8 +132,6 @@ func validateURL(pageUrl string) (queryUrl *url.URL) {
 		log.Println("Missing www in URL")
 		os.Exit(1)
 	}
-
-	log.Println(queryUrl.String())
 
 	return
 }
