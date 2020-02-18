@@ -1,26 +1,21 @@
-// Webcrawler
+/*
+Versatile webcrawler for scraping news sites and gather articles.
 
-// Stuff to think about:
-// Dynamic websites - browser automation (selenium)
-// Queue - Min priority queue then count number of times link occur
-// Concurrency
-// One collector per site scraped
-// Persistent background storage
-// Cross referencing filter with background storage (Maybe store the most frequent mentioned links in memory)
-// Scraping article metadata
-// Keep scraping in scope of domain
-// Cookies
-// Fix relative paths to absolute paths
+Made by: Soren Gade
+*/
 
 package main
 
 import (
+	"fmt"
 	"log"
 	url "net/url"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/gocolly/colly"
-	"github.com/gocolly/colly/queue"
+	"github.com/gocolly/redisstorage"
 )
 
 func main() {
@@ -46,53 +41,80 @@ func main() {
 	c := initScraper(queryUrl)
 >>>>>>> dev
 
-	// create a request queue with 10 consumer threads
-	q, _ := queue.New(
-		20, // Number of consumer threads
-		&queue.InMemoryQueueStorage{MaxSize: 10000}, // Use default queue storage
-	)
+	// Handle html
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) { handleLinks(c, e) })
+	c.OnHTML("meta[property]", func(e *colly.HTMLElement) { handleMeta(e) })
 
-	// Queue new links
-	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		link := e.Request.AbsoluteURL(e.Attr("href"))
-
-		hasVisited, err := c.HasVisited(link)
-
-		if err != nil {
-			return
-		}
-
-		if hasVisited {
-			return
-		}
-
-		// Visit link found on page on a new thread
-		q.AddURL(link)
-	})
-
-	// Before making a request print "Visiting ..."
+	// Debug print statement
 	c.OnRequest(func(r *colly.Request) {
-		//log.Println("Visiting:", r.URL.String())
+		log.Println("Visiting:", r.URL.String())
 	})
 
-	c.OnHTML("meta[property]", func(e *colly.HTMLElement) {
-		if e.Attr("property") != "og:title" {
-			return
-		}
-		log.Println(e.Attr("content"))
-	})
+	// Set start page
+	c.Visit(pageURL)
+	c.Wait()
+}
 
-	// Start scraping
-	q.AddURL(pageURL)
+func handleMeta(e *colly.HTMLElement) {
+	if e.Attr("property") != "og:title" {
+		return
+	}
+	//log.Println(e.Attr("content"))
+}
 
-	q.Run(c)
+func handleLinks(c *colly.Collector, e *colly.HTMLElement) {
+	link := e.Request.AbsoluteURL(e.Attr("href"))
+
+	hasVisited, err := c.HasVisited(link)
+
+	if err != nil {
+		return
+	}
+
+	if hasVisited {
+		return
+	}
+
+	e.Request.Visit(link)
 }
 
 func initScraper(url *url.URL) (scraper *colly.Collector) {
+	domainList := strings.Split(url.Host, ".")
+
+	// Take the second and last and make regex
+	regular := fmt.Sprintf("(http://|https://)[a-zA-Z]+\\.%s\\.%s", domainList[1], domainList[2])
+
+	// create the redis storage
+	storage := &redisstorage.Storage{
+		Address:  "127.0.0.1:6379",
+		Password: "",
+		DB:       0,
+		Prefix:   "news_url_filter",
+	}
+
 	scraper = colly.NewCollector(
-		colly.AllowedDomains("cnn.com"),
+		colly.Async(true),
+		colly.URLFilters(
+			regexp.MustCompile(regular),
+		),
 	)
+	scraper.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 1})
 	scraper.DisableCookies()
+
+	// add storage to the collector
+	err := scraper.SetStorage(storage)
+	if err != nil {
+		panic(err)
+	}
+
+	// delete previous data from storage
+	if err := storage.Clear(); err != nil {
+		log.Fatal(err)
+	}
+
+	// close redis client
+	//defer storage.Client.Close()
+
 	return
 }
 
@@ -115,10 +137,10 @@ func validateURL(pageUrl string) (queryUrl *url.URL) {
 		os.Exit(1)
 	}
 
-	//if !strings.Contains(queryUrl.Host, "www.") {
-	//log.Println("Missing www in URL")
-	//os.Exit(1)
-	//}
+	if !strings.Contains(queryUrl.Host, "www.") {
+		log.Println("Missing www in URL")
+		os.Exit(1)
+	}
 
 	return
 }
